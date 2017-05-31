@@ -1,4 +1,4 @@
 Lexan
 ===============
 
-An university task whose goal is to create an Deterministic Finite Automaton.
+An university task whose goal is to create a Deterministic Finite Automaton.
