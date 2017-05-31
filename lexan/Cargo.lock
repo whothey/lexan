@@ -1,0 +1,11 @@
+[root]
+name = "lexan"
+version = "0.1.0"
+dependencies = [
+ "dfa 0.1.0",
+]
+
+[[package]]
+name = "dfa"
+version = "0.1.0"
+

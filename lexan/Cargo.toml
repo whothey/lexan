@@ -1,0 +1,7 @@
+[package]
+name = "lexan"
+version = "0.1.0"
+authors = ["Gabriel Henrique Rudey <ucraaa@gmail.com>"]
+
+[dependencies]
+dfa = { path = "../dfa/" }
