@@ -19,6 +19,8 @@ use std::collections::HashMap;
 //  State
 enum Input {
     // Reading tokens as-is
+    // E.g.: if
+    // E.g.: else
     Normal,
     // Reading State definitions, like the left part of <S> ::= ...
     StateDef,
@@ -27,8 +29,8 @@ enum Input {
     StateTransitions,
     // Reading the transitions, like the nonterminals of the right part of state definition
     // E.g.: In `<S> ::= e<C> | q<B> | <>`, the nonterminals are '<C>' '<B>' and '<>'.
-    // <> is aknowleged as Epsilon
-    StateTransitionTarget
+    // <> is aknowleged as Epsilon (Epsilon is a terminal symbol! But in this state it is aknowledged!)
+    StateTransitionTarget(bool)
 }
 
 fn main() {
@@ -50,6 +52,7 @@ fn main() {
             // TODO: Fix non-helpful error message
             // TODO: Translate to English (or maybe Esperanto!)
             let line = l.expect("Houve um erro ao ler um arquivo");
+            writeln!(stderr(), "Line: `{}`", line).unwrap();
 
             for c in line.chars() {
                 // Skipping separators
@@ -65,63 +68,90 @@ fn main() {
                         }
                     },
                     Input::StateDef => {
-                        if c == '>' {
-                            reading = Input::StateTransitions;
-                        } else {
-                            // Add the new state
-                            let index = dfa.add_state(false);
+                        match c {
+                            '<' => continue,
+                            '>' => reading = Input::StateTransitions,
+                            _   => {
+                                // Add to mapper which index solves to current State, e.g. <S> maps to
+                                // index 3, <E> to index 8...
+                                let index = {
+                                    if ! grammar_mapper.contains_key(&c) {
+                                        let state = dfa.add_state(false);
+                                        grammar_mapper.insert(c, state);
 
-                            // Add to mapper which index solves to current State, e.g. <S> maps to
-                            // index 3, <E> to index 8...
-                            grammar_mapper.insert(c, index);
+                                        writeln!(stderr(), "Indexing {} to {}", c, state).unwrap();
+                                    }
 
-                            // Walk to new state
-                            dfa.set_current(index).expect("This should not happen!");
+                                    grammar_mapper.get(&c).unwrap()
+                                };
+
+                                // Walk to new state if it is not the initial
+                                if c != 'S' {
+                                    dfa.set_current(*index).expect("This should not happen!");
+                                }
+                            }
                         }
                     },
                     Input::StateTransitions => {
                         match c {
-                            '<'             => reading = Input::StateTransitionTarget,
+                            '<'             => reading = Input::StateTransitionTarget(false),
                             '|' | ':' | '=' => continue,
                             ch              => {
                                 if temp_transition.is_none() {
                                     temp_transition = Some(ch);
                                 } else {
-                                    writeln!(stderr(), "Warning: Reassignment to temp_transition! '{}' -> '{:?}'", c, temp_transition).unwrap();
+                                    // If there is two transitions, the grammar is not regular
+                                    writeln!(
+                                        stderr(),
+                                        "Warning: Nonregular grammar detected (a.k.a. reassignment to temp_transition! '{}' -> '{:?}')",
+                                        c, temp_transition
+                                    ).unwrap();
                                 }
                             }
                         }
                     },
-                    Input::StateTransitionTarget => {
+                    Input::StateTransitionTarget(had_state) => {
                         if c == '>' {
-                            // TODO: Handle e-transitions here
                             reading = Input::StateTransitions;
-                        } else {
-                            // In recognization, state exists in mappings
-                            if grammar_mapper.contains_key(&c) {
-                                let target = grammar_mapper.get(&c).unwrap();
 
-                                if let Some(t) = temp_transition.take() {
-                                    dfa.create_transition(t, *target)
-                                } else {
-                                    writeln!(stderr(), "Epsilon-transition to <{}>", c).unwrap();
-                                }
-                            } else {
-                                let index = dfa.add_state(false);
-                                // State don't exists yet, we need to map it and hope that it will be
-                                // defined in the future :P
-                                writeln!(stderr(), "Transição para estado inexistente: {}", c).unwrap();
-                                grammar_mapper.insert(c, index);
+                            // Check if is Epsilon (aka <>)
+                            if temp_transition.is_none() && ! had_state {
+                                dfa.set_current_state_accept(true)
                             }
+                        } else {
+                            // In recognization, get the entry value if state exists.
+                            // If state doesn't exists yet, we need to map it [`or_insert`] and hope that
+                            // it will be defined in the future :P
+                            if ! grammar_mapper.contains_key(&c) {
+                                let state = dfa.add_state(false);
+                                grammar_mapper.insert(c, state);
+
+                                writeln!(stderr(), "Indexing {} to {}", c, state).unwrap();
+                            }
+
+                            let target = grammar_mapper.get(&c).unwrap();
+
+                            if let Some(t) = temp_transition.take() {
+                                dfa.create_transition(t, *target)
+                            } else {
+                                writeln!(stderr(), "Epsilon-transition to <{}>", c).unwrap();
+                            }
+
+                            reading = Input::StateTransitionTarget(true);
                         }
                     }
                 }
             }
-        }
 
-        // We had finished the current line, so the last state accept the current token
-        dfa.set_current_state_accept(true);
-        dfa.rewind();
+            if reading == Input::Normal {
+                // We had finished the current line, so the last state accept the current token
+                dfa.set_current_state_accept(true);
+                dfa.rewind();
+            } else {
+                // Finished reading a line of grammar, must reset the state to keep reading
+                reading = Input::StateDef;
+            }
+        }
     }
 
     println!("{}", dfa.to_csv());
