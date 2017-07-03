@@ -9,6 +9,8 @@ use std::io::{ BufRead, BufReader };
 use std::env;
 use std::collections::HashMap;
 
+const INITIAL_STATE_CHAR: char = 'S';
+
 #[derive(PartialEq, Clone, Copy)]
 // enum Input: State Control for Token and Grammar recognizance
 // someword <- std token
@@ -33,6 +35,8 @@ enum Input {
     // Reading the transitions, like the nonterminals of the right part of state definition
     // E.g.: In `<S> ::= e<C> | q<B> | <>`, the nonterminals are '<C>' '<B>' and '<>'.
     // <> is aknowleged as Epsilon (Epsilon is a terminal symbol! But in this state it is aknowledged!)
+    // The bool member is to identify if any char exists inside "<>", eg: <B> = bool true and
+    // <> = false
     StateTransitionTarget(bool)
 }
 
@@ -60,11 +64,8 @@ fn main() {
             debug!("Line: `{}`", line);
 
             for c in line.chars() {
-                // Skipping separators
-                if c == ' ' { continue; }
-
                 match reading {
-                    Input::Normal => {
+                    Input::Normal if c != ' ' => {
                         if c == '<' {
                             reading = Input::StateDef;
                         } else {
@@ -72,7 +73,7 @@ fn main() {
                             dfa.create_transition_and_walk(c, state_index);
                         }
                     },
-                    Input::StateDef => {
+                    Input::StateDef if c != ' ' => {
                         match c {
                             '<' => continue,
                             '>' => reading = Input::StateTransitions,
@@ -90,18 +91,24 @@ fn main() {
                                     grammar_mapper.get(&c).unwrap()
                                 };
 
-                                // Walk to new state if it is not the initial
-                                if c != 'S' {
-                                    dfa.set_current(*index).expect("This should not happen!");
-                                }
+                                // If current char is == INITIAL_STATE_CHAR, rewind to initial
+                                // else, go to new state
+                                if c == INITIAL_STATE_CHAR { dfa.rewind(); }
+                                else { dfa.set_current(*index).expect("This should not happen!"); }
                             }
                         }
                     },
                     Input::StateTransitions => {
                         match c {
-                            '<'             => reading = Input::StateTransitionTarget(false),
-                            '|' | ':' | '=' => continue,
-                            ch              => {
+                            '<'       => reading = Input::StateTransitionTarget(false),
+                            // Epsilon Transitions, `b` in <A> ::= a<A> | b | c<C> or in
+                            // <B> ::= a<B> | b
+                            '|' | ' ' => {
+                                dfa.set_current_state_accept(true);
+                                temp_transition = None;
+                            },
+                            ':' | '=' => continue,
+                            ch if ch != ' ' => {
                                 if temp_transition.is_none() {
                                     temp_transition = Some(ch);
                                 } else {
@@ -111,10 +118,11 @@ fn main() {
                                         c, temp_transition
                                     );
                                 }
-                            }
+                            },
+                            _ => ()
                         }
                     },
-                    Input::StateTransitionTarget(had_state) => {
+                    Input::StateTransitionTarget(had_state) if c != ' ' => {
                         if c == '>' {
                             reading = Input::StateTransitions;
 
@@ -138,12 +146,13 @@ fn main() {
                             if let Some(t) = temp_transition.take() {
                                 dfa.create_transition(t, *target)
                             } else {
-                                writeln!(stderr(), "Epsilon-transition to <{}>", c).unwrap();
+                                warn!("Epsilon-transition to <{}>", c);
                             }
 
                             reading = Input::StateTransitionTarget(true);
                         }
                     }
+                    _ => ()
                 }
             }
 
