@@ -1,8 +1,11 @@
 extern crate dfa;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
 use dfa::lexer::Dfa;
 use std::fs::File;
-use std::io::{ stderr, Write, BufRead, BufReader };
+use std::io::{ BufRead, BufReader };
 use std::env;
 use std::collections::HashMap;
 
@@ -39,20 +42,22 @@ fn main() {
     let mut dfa = Dfa::new();
     let mut reader: BufReader<File>;
 
+    env_logger::init().expect("Logger out!");
+
     for f in &files {
         // TODO: Translate to English (or maybe Esperanto!)
         let file = File::open(f).expect("Não consegui ler os arquivos");
         let mut temp_transition: Option<char> = None;
         let mut grammar_mapper: HashMap<char, usize> = HashMap::new();
 
-        writeln!(stderr(), "Reading `{}`...", f).unwrap();
+        debug!("Reading `{}`...", f);
         reader = BufReader::new(file);
 
         for l in reader.lines() {
             // TODO: Fix non-helpful error message
             // TODO: Translate to English (or maybe Esperanto!)
             let line = l.expect("Houve um erro ao ler um arquivo");
-            writeln!(stderr(), "Line: `{}`", line).unwrap();
+            debug!("Line: `{}`", line);
 
             for c in line.chars() {
                 // Skipping separators
@@ -79,7 +84,7 @@ fn main() {
                                         let state = dfa.add_state(false);
                                         grammar_mapper.insert(c, state);
 
-                                        writeln!(stderr(), "Indexing {} to {}", c, state).unwrap();
+                                        debug!("Indexing {} to {}", c, state);
                                     }
 
                                     grammar_mapper.get(&c).unwrap()
@@ -101,11 +106,10 @@ fn main() {
                                     temp_transition = Some(ch);
                                 } else {
                                     // If there is two transitions, the grammar is not regular
-                                    writeln!(
-                                        stderr(),
-                                        "Warning: Nonregular grammar detected (a.k.a. reassignment to temp_transition! '{}' -> '{:?}')",
+                                    warn!(
+                                        "Nonregular grammar detected (a.k.a. reassignment to temp_transition! '{}' -> '{:?}')",
                                         c, temp_transition
-                                    ).unwrap();
+                                    );
                                 }
                             }
                         }
@@ -126,7 +130,7 @@ fn main() {
                                 let state = dfa.add_state(false);
                                 grammar_mapper.insert(c, state);
 
-                                writeln!(stderr(), "Indexing {} to {}", c, state).unwrap();
+                                debug!("Indexing {} to {}", c, state);
                             }
 
                             let target = grammar_mapper.get(&c).unwrap();
