@@ -70,6 +70,14 @@ impl<T: Hash + Eq> Dfa<T> {
         self.current
     }
 
+    pub fn state_accept(&self, index: usize) -> bool {
+        if let Some(state) = self.states.get(index) {
+            *state
+        } else {
+            false
+        }
+    }
+
     pub fn set_current(&mut self, t: usize) -> Result<(), &str> {
         if t <= self.states.len() {
             self.current = t;
@@ -92,7 +100,7 @@ impl<T: Hash + Eq> Dfa<T> {
     }
 }
 
-impl<T: Transitable> Dfa<T> {
+impl<T: Transitable + Debug> Dfa<T> {
     /// Add a existing `Transition` to `state`
     pub fn add_transition_to(&mut self, state: &usize, trans: Transition<T>) {
         self.alphabet.insert(trans.0.clone());
@@ -125,6 +133,120 @@ impl<T: Transitable> Dfa<T> {
         let current = self.current;
         self.create_transition_between(&current, &dest, by);
         self.current = dest;
+    }
+
+    /// Check all non-deterministic transitions of `index` and organize them as:
+    /// {
+    ///     char1: {dest1, dest2},
+    ///     char2: {dest4, dest1, dest3},
+    ///     char3: {dest4, dest2}
+    /// }
+    pub fn ndt_of(&self, index: &usize) -> HashMap<T, HashSet<usize>> {
+        let mut ndt = HashMap::new();
+
+        for c in &self.alphabet {
+            let mut multiple = HashSet::new();
+
+            for t in self.transitions[index].iter() {
+                if &t.0 == c {
+                    multiple.insert(t.1.clone());
+                }
+            }
+
+            if multiple.len() > 1 {
+                ndt.insert(c.clone(), multiple);
+            }
+        }
+
+        ndt
+    }
+
+    /// Check all non-deterministic states and map them to:
+    /// state_index1 == dest1 (both are indexes of DFA)
+    /// {
+    ///     state_index1: {
+    ///         char: {dest1, dest2},
+    ///         char2: {dest1, dest2},
+    ///     },
+    ///     state_index2: {
+    ///         char: {dest1, dest2}
+    ///     },
+    ///     state_indexX: ndt_of(state_indexX)
+    /// }
+    pub fn non_determinist_states(&self) -> HashMap<usize, HashMap<T, HashSet<usize>>> {
+        let mut ndet = HashMap::new();
+
+        for s in self.transitions.keys() {
+            let ndt = self.ndt_of(s);
+
+            if ndt.len() > 0 {
+                ndet.insert(s.clone(), ndt);
+            }
+        }
+
+        return ndet;
+    }
+
+    pub fn determinize(&mut self) {
+        let non_deterministic = self.non_determinist_states();
+
+        // (state index, {T: state index})
+        for (s, by) in non_deterministic {
+            // (c, T)
+            for (c, to) in by.iter() {
+                // Now only create an non-accept state
+                let newstate = self.add_state(false);
+
+                for t in to.iter() {
+                    // Vec of non-det transitions
+                    let mut ndtrans = Vec::new();
+
+                    if let Some(ts) = self.transitions.get_mut(t) {
+                        // The deterministic transitions in this state, will return to `ts` again
+                        // after `drain`
+                        let mut dets = HashSet::new();
+
+                        for d in ts.drain() {
+                            if d.0 == *c {
+                                // Wipe out non-deterministic transitions to Vec
+                                ndtrans.push(d);
+                            } else {
+                                // Hold deterministic ones
+                                dets.insert(d);
+                            }
+                        }
+
+                        // Put deterministic transitions back
+                        mem::replace(ts, dets);
+                    }
+
+                    // In each ND-Transition, create a transition to the new state
+                    self.create_transition_between(&t, &newstate, c.clone());
+
+                    // Add relationed states transitions
+                    let trans = {
+                        let mut v = Vec::new();
+
+                        for t in ndtrans.into_iter() {
+                            let dummie = HashSet::new();
+                            let sdest = self.transitions.get(&t.1).unwrap_or(&dummie);
+
+                            for dt in sdest {
+                                if dt.0 == t.0 {
+                                    v.push(dt.1);
+                                }
+                            }
+                        }
+
+                        v
+                    };
+
+                    for dt in &trans {
+                        self.create_transition_between(&newstate, &dt, c.clone());
+                    }
+                }
+            }
+        }
     }
 }
 
