@@ -78,23 +78,25 @@ fn main() {
                             '<' => continue,
                             '>' => reading = Input::StateTransitions,
                             _   => {
-                                // Add to mapper which index solves to current State, e.g. <S> maps to
+                                // Add to mapper which index solves to current State, e.g. <A> maps to
                                 // index 3, <E> to index 8...
                                 let index = {
-                                    if ! grammar_mapper.contains_key(&c) {
+                                    if ! grammar_mapper.contains_key(&c) && c == INITIAL_STATE_CHAR {
+                                        *dfa.initial()
+                                    } else  {
                                         let state = dfa.add_state(false);
                                         grammar_mapper.insert(c, state);
 
                                         debug!("Indexing {} to {}", c, state);
-                                    }
 
-                                    grammar_mapper.get(&c).unwrap()
+                                        *grammar_mapper.get(&c).unwrap()
+                                    }
                                 };
 
                                 // If current char is == INITIAL_STATE_CHAR, rewind to initial
                                 // else, go to new state
                                 if c == INITIAL_STATE_CHAR { dfa.rewind(); }
-                                else { dfa.set_current(*index).expect("This should not happen!"); }
+                                else { dfa.set_current(index).expect("This should not happen!"); }
                             }
                         }
                     },
@@ -104,8 +106,11 @@ fn main() {
                             // Epsilon Transitions, `b` in <A> ::= a<A> | b | c<C> or in
                             // <B> ::= a<B> | b
                             '|' | ' ' => {
-                                dfa.set_current_state_accept(true);
-                                temp_transition = None;
+                                if let Some(t) = temp_transition.take() {
+                                    let empty_state = dfa.add_state(true);
+                                    warn!("Creating new empty-state to {}: {}", t, empty_state);
+                                    dfa.create_transition(t, empty_state);
+                                }
                             },
                             ':' | '=' => continue,
                             ch if ch != ' ' => {
@@ -134,17 +139,23 @@ fn main() {
                             // In recognization, get the entry value if state exists.
                             // If state doesn't exists yet, we need to map it [`or_insert`] and hope that
                             // it will be defined in the future :P
-                            if ! grammar_mapper.contains_key(&c) {
-                                let state = dfa.add_state(false);
-                                grammar_mapper.insert(c, state);
+                            let target = if ! grammar_mapper.contains_key(&c) {
+                                if c == INITIAL_STATE_CHAR {
+                                    *dfa.initial()
+                                } else {
+                                    let state = dfa.add_state(false);
+                                    grammar_mapper.insert(c, state);
 
-                                debug!("Indexing {} to {}", c, state);
-                            }
+                                    debug!("Indexing {} to {}", c, state);
 
-                            let target = grammar_mapper.get(&c).unwrap();
+                                    *grammar_mapper.get(&c).unwrap()
+                                }
+                            } else {
+                                *grammar_mapper.get(&c).unwrap()
+                            };
 
                             if let Some(t) = temp_transition.take() {
-                                dfa.create_transition(t, *target)
+                                dfa.create_transition(t, target)
                             } else {
                                 warn!("Epsilon-transition to <{}>", c);
                             }
@@ -154,6 +165,14 @@ fn main() {
                     }
                     _ => ()
                 }
+            }
+
+            // Line ends like: <A> ::= a<A> | b<B> | c
+            // and so 'c' is not parsed
+            if let Some(t) = temp_transition.take() {
+                let empty_state = dfa.add_state(true);
+                warn!("Creating new empty-state to {}: {}", t, empty_state);
+                dfa.create_transition(t, empty_state);
             }
 
             if reading == Input::Normal {
@@ -167,5 +186,9 @@ fn main() {
         }
     }
 
+    println!("{}", dfa.to_csv());
+    dfa.determinize();
+    println!("{}", dfa.to_csv());
+    dfa.minimize();
     println!("{}", dfa.to_csv());
 }

@@ -9,7 +9,7 @@ impl Transitable for char {}
 /// State = true => State Accept
 pub type State = bool;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Transition<T>(T, usize);
 
 impl<T: Transitable> Transition<T> {
@@ -58,8 +58,8 @@ impl<T: Hash + Eq> Dfa<T> {
         self.initial = i;
     }
 
-    pub fn initial(&self) -> usize {
-        self.initial
+    pub fn initial(&self) -> &usize {
+        &self.initial
     }
 
     pub fn rewind(&mut self) {
@@ -135,6 +135,17 @@ impl<T: Transitable + Debug> Dfa<T> {
         self.current = dest;
     }
 
+    /// Removes a state from DFA, returns an Option with informations if state was accepting and
+    /// its transitions
+    pub fn remove_state(&mut self, index: usize) -> Option<(bool, Option<HashSet<Transition<T>>>)> {
+        if self.states.len() > index {
+            // Removing/Handling states this way remove references from transitions
+            Some((self.states.remove(index), self.transitions.remove(&index)))
+        } else {
+            None
+        }
+    }
+
     /// Check all non-deterministic transitions of `index` and organize them as:
     /// {
     ///     char1: {dest1, dest2},
@@ -173,7 +184,7 @@ impl<T: Transitable + Debug> Dfa<T> {
     ///     },
     ///     state_indexX: ndt_of(state_indexX)
     /// }
-    pub fn non_determinist_states(&self) -> HashMap<usize, HashMap<T, HashSet<usize>>> {
+    pub fn non_determinist_states(&self) -> Option<HashMap<usize, HashMap<T, HashSet<usize>>>> {
         let mut ndet = HashMap::new();
 
         for s in self.transitions.keys() {
@@ -184,26 +195,51 @@ impl<T: Transitable + Debug> Dfa<T> {
             }
         }
 
-        return ndet;
+        return if ndet.len() > 0 {
+            Some(ndet)
+        } else {
+            None
+        }
     }
 
+    /// Remove non-deterministic states from the DFA
     pub fn determinize(&mut self) {
-        let non_deterministic = self.non_determinist_states();
+        let mut state_map: HashMap<usize, HashSet<usize>> = HashMap::new();
 
-        // (state index, {T: state index})
-        for (s, by) in non_deterministic {
-            // (c, T)
-            for (c, to) in by.iter() {
-                // Now only create an non-accept state
-                let newstate = self.add_state(false);
+        while let Some(non_deterministic) = self.non_determinist_states() {
+            // {usize => {T => usize [dest]}}
+            for (s, by) in non_deterministic {
+                // {T => usize}
+                for (c, to) in by.iter() {
+                    let mut has_equivalent: Option<usize> = None;
 
-                for t in to.iter() {
+                    for (ns, mapped) in &state_map {
+                        if mapped == to {
+                            has_equivalent = Some(*ns);
+                            break;
+                        }
+                    }
+
+                    // Now only create an non-accept state
+                    let newstate = if let Some(st) = has_equivalent {
+                        st
+                    } else {
+                        let mut accept = false;
+
+                        for target in to.iter() {
+                            if self.state_accept(*target) {
+                                accept = true;
+                                break;
+                            }
+                        }
+
+                        self.add_state(accept)
+                    };
+
                     // Vec of non-det transitions
                     let mut ndtrans = Vec::new();
 
-                    if let Some(ts) = self.transitions.get_mut(t) {
-                        // The deterministic transitions in this state, will return to `ts` again
-                        // after `drain`
+                    if let Some(ts) = self.transitions.get_mut(&s) {
                         let mut dets = HashSet::new();
 
                         for d in ts.drain() {
@@ -221,32 +257,70 @@ impl<T: Transitable + Debug> Dfa<T> {
                     }
 
                     // In each ND-Transition, create a transition to the new state
-                    self.create_transition_between(&t, &newstate, c.clone());
+                    self.create_transition_between(&s, &newstate, c.clone());
+                    state_map.insert(newstate, to.clone());
 
-                    // Add relationed states transitions
-                    let trans = {
-                        let mut v = Vec::new();
+                    let new_state_transitions = {
+                        let mut trans = Vec::new();
 
-                        for t in ndtrans.into_iter() {
-                            let dummie = HashSet::new();
-                            let sdest = self.transitions.get(&t.1).unwrap_or(&dummie);
-
-                            for dt in sdest {
-                                if dt.0 == t.0 {
-                                    v.push(dt.1);
+                        for ndt in ndtrans.iter() {
+                            // Add relationed states transitions
+                            if let Some(ts) = self.transitions.get(&ndt.1) {
+                                for t in ts {
+                                    trans.push(t.clone());
                                 }
                             }
                         }
 
-                        v
+                        trans
                     };
 
-                    for dt in &trans {
-                        self.create_transition_between(&newstate, &dt, c.clone());
+                    for dt in new_state_transitions.into_iter() {
+                        self.add_transition_to(&newstate, dt);
                     }
                 }
             }
         }
+    }
+
+    pub fn get_unreachable_states(&self) -> Vec<usize> {
+        let mut unreached: Vec<usize> = (0..self.states.len()).collect();
+        let mut current: usize;
+        let mut next = vec![self.initial().to_owned()];
+
+        // BFS
+        while unreached.len() > 0 && next.len() > 0 {
+            current = next.remove(0);
+
+            for ts in self.transitions.get(&current) {
+                for t in ts {
+                    if unreached.binary_search(&t.1).is_ok() {
+                        next.push(t.1);
+                    }
+                }
+            }
+
+            unreached.remove_item(&current);
+        }
+
+        unreached
+    }
+
+    pub fn remove_unreachable_states(&mut self) {
+        let unreached = self.get_unreachable_states();
+
+        for state in unreached {
+            println!("Removing state {}", state);
+            self.remove_state(state);
+        }
+    }
+
+    pub fn remove_dead_states(&mut self) {
+    }
+
+    pub fn minimize(&mut self) {
+        self.remove_unreachable_states();
+        self.remove_dead_states();
     }
 }
 
@@ -262,7 +336,7 @@ impl<T: Display + Debug + Eq + Hash> Dfa<T> {
         csv.push('\n');
 
         for (k, accept) in self.states().iter().enumerate() {
-            if k == self.initial() { csv.push_str("->"); }
+            if k == *self.initial() { csv.push_str("->"); }
             if *accept { csv.push('*'); }
 
             csv += format!("<{}>", k).as_str();
@@ -284,7 +358,7 @@ impl<T: Display + Debug + Eq + Hash> Dfa<T> {
                             csv.push_str(",-");
                         }
                     },
-                    None    => csv.push_str(",-")
+                    None => csv.push_str(",-")
                 }
             }
 
