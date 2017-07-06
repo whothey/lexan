@@ -19,7 +19,7 @@ impl<T: Transitable> Transition<T> {
 }
 
 pub struct Dfa<T> {
-    states: Vec<State>,
+    states: HashMap<usize, State>,
 
     /// Index on `states` which is the initial state
     initial: usize,
@@ -36,7 +36,12 @@ impl<T: Hash + Eq> Dfa<T> {
     pub fn new() -> Self {
         Self {
             // Initial state is already created
-            states: vec![false],
+            states: {
+                let mut hm = HashMap::new();
+                hm.insert(0, false);
+
+                hm
+            },
             alphabet: HashSet::new(),
             initial: 0,
             current: 0,
@@ -44,14 +49,17 @@ impl<T: Hash + Eq> Dfa<T> {
         }
     }
 
-    pub fn states(&self) -> &Vec<State> {
+    pub fn states(&self) -> &HashMap<usize, State> {
         &self.states
     }
 
     /// Add a new state and return its index
     pub fn add_state(&mut self, state: State) -> usize {
-        self.states.push(state);
-        self.states.len() - 1
+        let index = self.states.len();
+
+        self.states.insert(index, state);
+
+        index
     }
 
     pub fn set_initial(&mut self, i: usize) {
@@ -71,7 +79,7 @@ impl<T: Hash + Eq> Dfa<T> {
     }
 
     pub fn state_accept(&self, index: usize) -> bool {
-        if let Some(state) = self.states.get(index) {
+        if let Some(state) = self.states.get(&index) {
             *state
         } else {
             false
@@ -96,7 +104,7 @@ impl<T: Hash + Eq> Dfa<T> {
     }
 
     pub fn set_current_state_accept(&mut self, accept: bool) {
-        mem::replace(self.states.get_mut(self.current).unwrap(), accept);
+        self.states.insert(self.current, accept);
     }
 }
 
@@ -138,9 +146,8 @@ impl<T: Transitable + Debug> Dfa<T> {
     /// Removes a state from DFA, returns an Option with informations if state was accepting and
     /// its transitions
     pub fn remove_state(&mut self, index: usize) -> Option<(bool, Option<HashSet<Transition<T>>>)> {
-        if self.states.len() > index {
-            // Removing/Handling states this way remove references from transitions
-            Some((self.states.remove(index), self.transitions.remove(&index)))
+        if self.states.contains_key(&index) {
+            Some((self.states.remove(&index).unwrap(), self.transitions.remove(&index)))
         } else {
             None
         }
@@ -295,6 +302,7 @@ impl<T: Transitable + Debug> Dfa<T> {
             for ts in self.transitions.get(&current) {
                 for t in ts {
                     if unreached.binary_search(&t.1).is_ok() {
+                        println!("Will walk on: {}", t.1);
                         next.push(t.1);
                     }
                 }
@@ -310,7 +318,6 @@ impl<T: Transitable + Debug> Dfa<T> {
         let unreached = self.get_unreachable_states();
 
         for state in unreached {
-            println!("Removing state {}", state);
             self.remove_state(state);
         }
     }
@@ -335,8 +342,8 @@ impl<T: Display + Debug + Eq + Hash> Dfa<T> {
 
         csv.push('\n');
 
-        for (k, accept) in self.states().iter().enumerate() {
-            if k == *self.initial() { csv.push_str("->"); }
+        for (k, accept) in self.states().iter() {
+            if k == self.initial() { csv.push_str("->"); }
             if *accept { csv.push('*'); }
 
             csv += format!("<{}>", k).as_str();
