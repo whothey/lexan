@@ -1,4 +1,4 @@
-use std::collections::{ HashSet, HashMap };
+use std::collections::{ HashSet, HashMap, VecDeque };
 use std::hash::Hash;
 use std::fmt::{ Display, Debug };
 use std::mem;
@@ -265,45 +265,50 @@ impl<T: Transitable + Debug> Dfa<T> {
 
                     // In each ND-Transition, create a transition to the new state
                     self.create_transition_between(&s, &newstate, c.clone());
-                    state_map.insert(newstate, to.clone());
 
-                    let new_state_transitions = {
-                        let mut trans = Vec::new();
+                    if has_equivalent.is_none() {
+                        state_map.insert(newstate, to.clone());
+                        let new_state_transitions = {
+                            let mut trans = Vec::new();
 
-                        for ndt in ndtrans.iter() {
-                            // Add relationed states transitions
-                            if let Some(ts) = self.transitions.get(&ndt.1) {
-                                for t in ts {
-                                    trans.push(t.clone());
+                            for ndt in ndtrans.iter() {
+                                // Add relationed states transitions
+                                if let Some(ts) = self.transitions.get(&ndt.1) {
+                                    for t in ts {
+                                        trans.push(t.clone());
+                                    }
                                 }
                             }
+
+                            trans
+                        };
+
+                        for dt in new_state_transitions.into_iter() {
+                            self.add_transition_to(&newstate, dt);
                         }
-
-                        trans
-                    };
-
-                    for dt in new_state_transitions.into_iter() {
-                        self.add_transition_to(&newstate, dt);
                     }
                 }
             }
+            break;
         }
     }
 
+    // Would be great to use an "Iterator" to BFS
     pub fn get_unreachable_states(&self) -> Vec<usize> {
         let mut unreached: Vec<usize> = (0..self.states.len()).collect();
         let mut current: usize;
-        let mut next = vec![self.initial().to_owned()];
+        let mut next = VecDeque::new();
+        
+        next.push_back(self.initial().to_owned());
 
-        // BFS
+        // "BFS"
         while unreached.len() > 0 && next.len() > 0 {
-            current = next.remove(0);
+            current = next.pop_front().unwrap();
 
             for ts in self.transitions.get(&current) {
                 for t in ts {
                     if unreached.binary_search(&t.1).is_ok() {
-                        println!("Will walk on: {}", t.1);
-                        next.push(t.1);
+                        next.push_back(t.1);
                     }
                 }
             }
