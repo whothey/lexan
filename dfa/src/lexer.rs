@@ -331,20 +331,27 @@ impl<T: Transitable + Debug> Dfa<T> {
     }
 }
 
-impl<T: Display + Debug + Eq + Hash> Dfa<T> {
+impl<T: Display + Debug + Eq + Hash + Ord> Dfa<T> {
     pub fn to_csv(&self) -> String {
         let mut csv = String::from("State");
+        let mut alphabet: Vec<&T> = self.alphabet.iter().collect();
+        let mut states: Vec<&usize> = self.states.keys().collect();
+
+        alphabet.sort();
+        states.sort();
 
         // Header
-        for a in &self.alphabet {
+        for a in &alphabet {
             csv += format!(",{}", a).as_str();
         }
 
         csv.push('\n');
 
-        for (k, accept) in self.states().iter() {
-            if k == self.initial() { csv.push_str("->"); }
-            if *accept { csv.push('*'); }
+        for k in &states {
+            let accept = self.states.get(&k).unwrap();
+
+            if k.to_owned() == self.initial() { csv.push_str("->"); }
+            if accept.to_owned() { csv.push('*'); }
 
             csv += format!("<{}>", k).as_str();
 
