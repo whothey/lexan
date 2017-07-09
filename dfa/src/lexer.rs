@@ -214,43 +214,69 @@ impl<T: Transitable + Debug> Dfa<T> {
         let mut state_map: HashMap<usize, HashSet<usize>> = HashMap::new();
 
         while let Some(non_deterministic) = self.non_determinist_states() {
+            println!("Statemap Init: {:?}", state_map);
+            // Map the new created states and their new transitions
+            let mut new_states: HashMap<usize, Vec<_>> = HashMap::new();
+
             // {usize => {T => usize [dest]}}
             for (s, by) in non_deterministic {
                 // {T => usize}
+                // First, for each non-deterministic transition, map a new state
                 for (c, to) in by.iter() {
+                    let mut trans_to: HashSet<_> = HashSet::new();
                     let mut has_equivalent: Option<usize> = None;
+                    let mut ndtrans = Vec::new(); // Vec of non-det transitions
 
+                    // Check if there is any equivalent determinized transition created
                     for (ns, mapped) in &state_map {
                         if mapped == to {
-                            has_equivalent = Some(*ns);
+                            println!("EQUIV {}<-->{}", s, ns);
+                            has_equivalent = Some(ns.to_owned());
                             break;
                         }
                     }
 
-                    // Now only create an non-accept state
-                    let newstate = if let Some(st) = has_equivalent {
-                        st
-                    } else {
+                    // If some of mapped transitions are equivalent, then use this state as target
+                    // to the non-deterministic transition, else create and map the new transition
+                    let newstate = if let Some(st) = has_equivalent { st } else {
                         let mut accept = false;
 
+                        // Check if any target states from transitions accept
                         for target in to.iter() {
-                            if self.state_accept(*target) {
+                            if self.state_accept(target.to_owned()) {
                                 accept = true;
                                 break;
                             }
                         }
 
-                        self.add_state(accept)
-                    };
+                        let index = self.add_state(accept);
 
-                    // Vec of non-det transitions
-                    let mut ndtrans = Vec::new();
+                        {
+                            let mut hm = HashSet::new();
+
+                            for t in to {
+                                // If target states are created by minimization, then get its
+                                // original transitions, or simply insert the state
+                                if state_map.contains_key(t) {
+                                    hm = hm.union(&state_map[t]).cloned().collect();
+                                } else {
+                                    hm.insert(t.to_owned());
+                                }
+                            }
+
+                            state_map.insert(index, hm);
+                        }
+
+                        //state_map.insert(index, to.clone());
+
+                        index
+                    };
 
                     if let Some(ts) = self.transitions.get_mut(&s) {
                         let mut dets = HashSet::new();
 
                         for d in ts.drain() {
-                            if d.0 == *c {
+                            if d.0 == c.to_owned() {
                                 // Wipe out non-deterministic transitions to Vec
                                 ndtrans.push(d);
                             } else {
@@ -265,31 +291,33 @@ impl<T: Transitable + Debug> Dfa<T> {
 
                     // In each ND-Transition, create a transition to the new state
                     self.create_transition_between(&s, &newstate, c.clone());
-
-                    if has_equivalent.is_none() {
-                        state_map.insert(newstate, to.clone());
-                        let new_state_transitions = {
-                            let mut trans = Vec::new();
-
-                            for ndt in ndtrans.iter() {
-                                // Add relationed states transitions
-                                if let Some(ts) = self.transitions.get(&ndt.1) {
-                                    for t in ts {
-                                        trans.push(t.clone());
-                                    }
-                                }
-                            }
-
-                            trans
-                        };
-
-                        for dt in new_state_transitions.into_iter() {
-                            self.add_transition_to(&newstate, dt);
-                        }
-                    }
+                    new_states.insert(newstate, ndtrans);
                 }
             }
-            break;
+
+            // After all states are mapped then we could create their transitions, else
+            // inconsistent transitions may be mapped makeing determinization worthless
+            for (ns, ts) in new_states {
+                let new_state_transitions = {
+                    let mut trans = Vec::new();
+
+                    for ndt in ts {
+                        // Add relationed states transitions
+                        if let Some(ts) = self.transitions.get(&ndt.1) {
+                            for t in ts {
+                                trans.push(t.clone());
+                            }
+                        }
+                    }
+
+                    trans
+                };
+
+                for dt in new_state_transitions.into_iter() {
+                    self.add_transition_to(&ns, dt);
+                }
+            }
+            println!("Statemap end: {:?}", state_map);
         }
     }
 
@@ -319,6 +347,39 @@ impl<T: Transitable + Debug> Dfa<T> {
         unreached
     }
 
+    pub fn get_dead_states(&self) -> Vec<usize> {
+        let mut dead: Vec<usize> = (0..self.states.len()).collect();
+        let mut current: usize;
+        let mut stack = vec![self.initial().to_owned()];
+        let mut path = Vec::new();
+
+        // "DFS"
+        while dead.len() > 0 && stack.len() > 0 {
+            current = stack.pop().unwrap();
+            path.push(current);
+
+            if let Some(trans) = self.transitions.get(&current) {
+                if trans.len() == 0 {
+                    if self.state_accept(current) {
+                        for s in &path {
+                            dead.remove_item(&s);
+                        }
+                    } // else &current is dead
+                }
+
+                for t in trans {
+                    if dead.binary_search(&t.1).is_ok() {
+                        stack.push(t.1);
+                    } else {
+                        dead.remove_item(&t.1);
+                    }
+                }
+            }
+        }
+
+        dead
+    }
+
     pub fn remove_unreachable_states(&mut self) {
         let unreached = self.get_unreachable_states();
 
@@ -328,6 +389,11 @@ impl<T: Transitable + Debug> Dfa<T> {
     }
 
     pub fn remove_dead_states(&mut self) {
+        let dead = self.get_dead_states();
+
+        for state in dead {
+            self.remove_state(state);
+        }
     }
 
     pub fn minimize(&mut self) {
@@ -360,13 +426,13 @@ impl<T: Display + Debug + Eq + Hash + Ord> Dfa<T> {
 
             csv += format!("<{}>", k).as_str();
 
-            for a in &self.alphabet {
+            for a in &alphabet {
                 match self.transitions.get(&k) {
                     Some(trans) => {
                         let mut has_states = false;
 
                         for t in trans {
-                            if t.0 == *a {
+                            if &t.0 == a.to_owned() {
                                 // Controls the first comma
                                 if ! has_states { csv.push(','); has_states = true; }
                                 csv += format!("<{}>", t.1).as_str();
