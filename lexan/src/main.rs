@@ -80,17 +80,17 @@ fn main() {
                             _   => {
                                 // Add to mapper which index solves to current State, e.g. <A> maps to
                                 // index 3, <E> to index 8...
-                                let index = {
-                                    if ! grammar_mapper.contains_key(&c) && c == INITIAL_STATE_CHAR {
-                                        *dfa.initial()
-                                    } else  {
+                                let index = if c == INITIAL_STATE_CHAR {
+                                    *dfa.initial()
+                                } else {
+                                    if ! grammar_mapper.contains_key(&c) {
                                         let state = dfa.add_state(false);
                                         grammar_mapper.insert(c, state);
 
-                                        debug!("Indexing {} to {}", c, state);
-
-                                        *grammar_mapper.get(&c).unwrap()
+                                        debug!("[DEF] Indexing {} to {}", c, state);
                                     }
+
+                                    *grammar_mapper.get(&c).unwrap()
                                 };
 
                                 // If current char is == INITIAL_STATE_CHAR, rewind to initial
@@ -139,18 +139,16 @@ fn main() {
                             // In recognization, get the entry value if state exists.
                             // If state doesn't exists yet, we need to map it [`or_insert`] and hope that
                             // it will be defined in the future :P
-                            let target = if ! grammar_mapper.contains_key(&c) {
-                                if c == INITIAL_STATE_CHAR {
-                                    *dfa.initial()
-                                } else {
+                            let target = if c == INITIAL_STATE_CHAR {
+                                *dfa.initial()
+                            } else {
+                                if ! grammar_mapper.contains_key(&c) {
                                     let state = dfa.add_state(false);
                                     grammar_mapper.insert(c, state);
 
-                                    debug!("Indexing {} to {}", c, state);
-
-                                    *grammar_mapper.get(&c).unwrap()
+                                    debug!("[TRANS] Indexing {} to {}", c, state);
                                 }
-                            } else {
+
                                 *grammar_mapper.get(&c).unwrap()
                             };
 
