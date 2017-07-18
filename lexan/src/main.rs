@@ -184,20 +184,9 @@ fn main() {
         }
     }
 
-    info!("All files parsed");
+    info!("All files were parsed");
 
+    dfa.determinize();
+    dfa.minimize();
     println!("{}", dfa.to_csv());
-    info!("Will optimize:");
-    info!("Determinized:");
-    dfa.determinize();
-    dfa.determinize();
-    dfa.determinize();
-    //println!("{}", dfa.to_csv());
-    info!("Determinized again:");
-    dfa.determinize();
-    info!("And again:");
-    dfa.determinize();
-    //println!("{}", dfa.to_csv());
-    //dfa.minimize();
-    //println!("{}", dfa.to_csv());
 }

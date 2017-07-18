@@ -214,7 +214,6 @@ impl<T: Transitable + Debug> Dfa<T> {
         let mut state_map: HashMap<usize, HashSet<usize>> = HashMap::new();
 
         while let Some(non_deterministic) = self.non_determinist_states() {
-            println!("Statemap Init: {:?}", state_map);
             // Map the new created states and their new transitions
             let mut new_states: HashMap<usize, Vec<_>> = HashMap::new();
 
@@ -227,10 +226,21 @@ impl<T: Transitable + Debug> Dfa<T> {
                     let mut has_equivalent: Option<usize> = None;
                     let mut ndtrans = Vec::new(); // Vec of non-det transitions
 
+                    // Parse all transitions of the future new determinized state
+                    for t in to {
+                        // If target states are created by minimization, then get its
+                        // original (the ones whose created the first state) transitions,
+                        // else simply insert the state
+                        if state_map.contains_key(t) {
+                            trans_to = trans_to.union(&state_map[t]).cloned().collect();
+                        } else {
+                            trans_to.insert(t.to_owned());
+                        }
+                    }
+
                     // Check if there is any equivalent determinized transition created
                     for (ns, mapped) in &state_map {
-                        if mapped == to {
-                            println!("EQUIV {}<-->{}", s, ns);
+                        if mapped == &trans_to {
                             has_equivalent = Some(ns.to_owned());
                             break;
                         }
@@ -251,27 +261,13 @@ impl<T: Transitable + Debug> Dfa<T> {
 
                         let index = self.add_state(accept);
 
-                        {
-                            let mut hm = HashSet::new();
-
-                            for t in to {
-                                // If target states are created by minimization, then get its
-                                // original transitions, or simply insert the state
-                                if state_map.contains_key(t) {
-                                    hm = hm.union(&state_map[t]).cloned().collect();
-                                } else {
-                                    hm.insert(t.to_owned());
-                                }
-                            }
-
-                            state_map.insert(index, hm);
-                        }
-
-                        //state_map.insert(index, to.clone());
+                        state_map.insert(index, trans_to);
 
                         index
                     };
 
+                    // Cleanup the non-deterministic states removing the non-deterministic
+                    // transitions
                     if let Some(ts) = self.transitions.get_mut(&s) {
                         let mut dets = HashSet::new();
 
@@ -291,21 +287,49 @@ impl<T: Transitable + Debug> Dfa<T> {
 
                     // In each ND-Transition, create a transition to the new state
                     self.create_transition_between(&s, &newstate, c.clone());
+                    // Map this state its transitions
                     new_states.insert(newstate, ndtrans);
                 }
             }
 
             // After all states are mapped then we could create their transitions, else
-            // inconsistent transitions may be mapped makeing determinization worthless
+            // inconsistent transitions may be mapped making determinization worthless
             for (ns, ts) in new_states {
+                // Check if any of the states is 
+                let superstate = {
+                    let mut state = None;
+                    let mut ss = HashSet::new();
+
+                    for ndt in &ts {
+                        if state_map.contains_key(&ndt.1) {
+                            ss = ss.union(&state_map[&ndt.1]).cloned().collect();
+                        }
+                    }
+
+                    for ndt in &ts {
+                        if state_map.contains_key(&ndt.1) && ss == state_map[&ndt.1] {
+                            state = Some(ndt.1);
+                            break;
+                        }
+                    }
+
+                    state
+                };
+
                 let new_state_transitions = {
                     let mut trans = Vec::new();
 
-                    for ndt in ts {
-                        // Add relationed states transitions
-                        if let Some(ts) = self.transitions.get(&ndt.1) {
-                            for t in ts {
-                                trans.push(t.clone());
+                    if let Some(ss) = superstate {
+                        for t in &self.transitions[&ss] {
+                            trans.push(t.clone());
+                        }
+                    } else {
+                        for ndt in ts {
+                            // Add relationed states transitions
+                            if let Some(ts) = self.transitions.get(&ndt.1) {
+                                for t in ts {
+                                    trans.push(t.clone());
+                                }
                             }
                         }
                     }
@@ -313,19 +337,21 @@ impl<T: Transitable + Debug> Dfa<T> {
                     trans
                 };
 
-                for dt in new_state_transitions.into_iter() {
+                for dt in new_state_transitions {
                     self.add_transition_to(&ns, dt);
                 }
             }
-            println!("Statemap end: {:?}", state_map);
         }
     }
 
     // Would be great to use an "Iterator" to BFS
     pub fn get_unreachable_states(&self) -> Vec<usize> {
-        let mut unreached: Vec<usize> = (0..self.states.len()).collect();
+        let mut unreached: Vec<usize> = self.states.keys().cloned().collect();
         let mut current: usize;
         let mut next = VecDeque::new();
+
+        // Using binary seach requires a sorted vec
+        unreached.sort();
         
         next.push_back(self.initial().to_owned());
 
@@ -348,30 +374,46 @@ impl<T: Transitable + Debug> Dfa<T> {
     }
 
     pub fn get_dead_states(&self) -> Vec<usize> {
-        let mut dead: Vec<usize> = (0..self.states.len()).collect();
-        let mut current: usize;
-        let mut stack = vec![self.initial().to_owned()];
-        let mut path = Vec::new();
+        let mut unvisited: Vec<usize> = self.states.keys().cloned().collect();
+        let mut dead: Vec<usize>;
+        // The current path of DFS
+        let mut path: Vec<usize> = Vec::new();
+        // (path, stacked_by)
+        let mut stack: Vec<(usize, usize)> = vec![
+            (self.initial().to_owned(), self.initial().to_owned())
+        ];
+
+        // Using binary seach requires a sorted vec
+        unvisited.sort();
+        dead = unvisited.clone();
 
         // "DFS"
         while dead.len() > 0 && stack.len() > 0 {
-            current = stack.pop().unwrap();
+            let (current, stacked_by) = stack.pop().unwrap();
+
+            // Check and correct path
+            while let Some(last_in_path) = path.iter().cloned().last() {
+                if stacked_by != last_in_path { path.pop(); }
+                else { break; }
+            }
+
             path.push(current);
 
             if let Some(trans) = self.transitions.get(&current) {
-                if trans.len() == 0 {
-                    if self.state_accept(current) {
-                        for s in &path {
-                            dead.remove_item(&s);
-                        }
-                    } // else &current is dead
-                }
+                // Check if current state accepts or is not in "Dead" states, meaning that it leads
+                // to an accept-state
+                if self.state_accept(current) || dead.binary_search(&current).is_err() {
+                    for s in &path {
+                        dead.remove_item(&s);
+                    }
+                } // else &current is dead
 
+                // Stack neighbours
                 for t in trans {
-                    if dead.binary_search(&t.1).is_ok() {
-                        stack.push(t.1);
-                    } else {
-                        dead.remove_item(&t.1);
+                    // It can't be a non-dead state, neither be already visited
+                    if dead.binary_search(&t.1).is_ok() && unvisited.iter().position(|x| x == &t.1).is_some() {
+                        unvisited.remove_item(&t.1);
+                        stack.push((t.1, current));
                     }
                 }
             }
