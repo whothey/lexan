@@ -399,15 +399,15 @@ impl<T: Transitable + Debug> Dfa<T> {
 
             path.push(current);
 
-            if let Some(trans) = self.transitions.get(&current) {
-                // Check if current state accepts or is not in "Dead" states, meaning that it leads
-                // to an accept-state
-                if self.state_accept(current) || dead.binary_search(&current).is_err() {
-                    for s in &path {
-                        dead.remove_item(&s);
-                    }
-                } // else &current is dead
+            // Check if current state accepts or is not in "Dead" states, meaning that it leads
+            // to an accept-state
+            if self.state_accept(current) || dead.binary_search(&current).is_err() {
+                for s in &path {
+                    dead.remove_item(&s);
+                }
+            } // else &current is dead
 
+            if let Some(trans) = self.transitions.get(&current) {
                 // Stack neighbours
                 for t in trans {
                     // It can't be a non-dead state, neither be already visited
