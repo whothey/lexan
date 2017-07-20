@@ -445,6 +445,41 @@ impl<T: Transitable + Debug> Dfa<T> {
 }
 
 impl<T: Display + Debug + Eq + Hash + Ord> Dfa<T> {
+    pub fn to_dot(&self) -> String {
+        let mut dot = String::from("digraph FA {\nrankdir=\"LR\";\n");
+        let alphabet: Vec<&T>   = { let mut a = self.alphabet.iter().collect::<Vec<_>>(); a.sort(); a };
+        let states: Vec<&usize> = { let mut s = self.states.keys().collect::<Vec<_>>(); s.sort(); s };
+
+        for state in states {
+            if self.state_accept(state.to_owned()) {
+                dot += format!("{} [shape=doublecircle];\n", state).as_str();
+            }
+
+            for s in &alphabet {
+                if let Some(ref transitions) = self.transitions.get(&state) {
+                    let mut ts = "{".to_string();
+
+                    for t in transitions.iter() {
+                        if &&t.0 == s {
+                            if ts.len() > 1 { ts.push(','); }
+                            ts += format!("{}", t.1).as_str();
+                        }
+                    }
+
+                    ts.push('}');
+
+                    if ts.len() > 2 {
+                        dot += format!("{} -> {} [label={}];\n", state, ts, s).as_str();
+                    }
+                }
+            }
+        }
+
+        dot.push_str("}\n");
+
+        dot
+    }
+
     pub fn to_csv(&self) -> String {
         let mut csv = String::from("State");
         let mut alphabet: Vec<&T> = self.alphabet.iter().collect();
