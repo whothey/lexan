@@ -18,6 +18,7 @@ impl<T: Transitable> Transition<T> {
     }
 }
 
+#[allow(dead_code)]
 pub struct Dfa<T> {
     states: HashMap<usize, State>,
 
@@ -49,19 +50,25 @@ impl<T: Hash + Eq> Dfa<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn states(&self) -> &HashMap<usize, State> {
         &self.states
     }
 
     /// Add a new state and return its index
     pub fn add_state(&mut self, state: State) -> usize {
-        let index = self.states.len();
+        let index = self.states
+            .keys()
+            .max()
+            .unwrap_or(&0)
+            .to_owned() + 1;
 
         self.states.insert(index, state);
 
         index
     }
 
+    #[allow(dead_code)]
     pub fn set_initial(&mut self, i: usize) {
         self.initial = i;
     }
@@ -74,6 +81,7 @@ impl<T: Hash + Eq> Dfa<T> {
         self.current = self.initial;
     }
 
+    #[allow(dead_code)]
     pub fn current(&self) -> usize {
         self.current
     }
@@ -95,10 +103,12 @@ impl<T: Hash + Eq> Dfa<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn alphabet(&self) -> &HashSet<T> {
         &self.alphabet
     }
 
+    #[allow(dead_code)]
     pub fn transitions(&self) -> &HashMap<usize, HashSet<Transition<T>>> {
         &self.transitions
     }
@@ -146,6 +156,10 @@ impl<T: Transitable + Debug> Dfa<T> {
     /// Removes a state from DFA, returns an Option with informations if state was accepting and
     /// its transitions
     pub fn remove_state(&mut self, index: usize) -> Option<(bool, Option<HashSet<Transition<T>>>)> {
+        for (_, ts) in &mut self.transitions {
+            ts.retain(|x| x.1 != index);
+        }
+
         if self.states.contains_key(&index) {
             Some((self.states.remove(&index).unwrap(), self.transitions.remove(&index)))
         } else {
@@ -392,26 +406,24 @@ impl<T: Transitable + Debug> Dfa<T> {
             let (current, stacked_by) = stack.pop().unwrap();
 
             // Check and correct path
-            while let Some(last_in_path) = path.iter().cloned().last() {
+            while let Some(last_in_path) = path.iter().last().cloned() {
                 if stacked_by != last_in_path { path.pop(); }
                 else { break; }
             }
 
             path.push(current);
 
-            // Check if current state accepts or is not in "Dead" states, meaning that it leads
-            // to an accept-state
-            if self.state_accept(current) || dead.binary_search(&current).is_err() {
-                for s in &path {
-                    dead.remove_item(&s);
-                }
-            } // else &current is dead
-
             if let Some(trans) = self.transitions.get(&current) {
-                // Stack neighbours
                 for t in trans {
-                    // It can't be a non-dead state, neither be already visited
-                    if dead.binary_search(&t.1).is_ok() && unvisited.iter().position(|x| x == &t.1).is_some() {
+                    // Check if any neighbour accept or is not dead, if so, remove it from dead
+                    // states and set the whole path as non-dead
+                    if self.state_accept(t.1) || dead.binary_search(&t.1).is_err() {
+                        dead.remove_item(&t.1);
+                        for s in &path { dead.remove_item(s); }
+                    }
+
+                    // Stack neighbours that were not visited
+                    if unvisited.iter().position(|x| x == &t.1).is_some() {
                         unvisited.remove_item(&t.1);
                         stack.push((t.1, current));
                     }
@@ -441,6 +453,29 @@ impl<T: Transitable + Debug> Dfa<T> {
     pub fn minimize(&mut self) {
         self.remove_unreachable_states();
         self.remove_dead_states();
+    }
+
+    pub fn insert_error_state(&mut self) {
+        let error_state    = self.add_state(true);
+        let states: Vec<_> = self.states.keys().cloned().collect();
+        let alphabet: HashSet<_> = self.alphabet.iter().cloned().collect();
+
+        info!("Error State: {}", error_state);
+
+        for state in states {
+            let transitions_by = { 
+                let transitions = self.transitions.entry(state).or_insert(HashSet::new());
+                transitions.iter().map(|x| x.0.clone()).collect()
+            };
+
+            let missing = alphabet.difference(&transitions_by);
+
+            debug!("Missing on {}: {:?}", state, missing);
+
+            for ch in missing {
+                self.create_transition_between(&state, &error_state, ch.to_owned());
+            }
+        }
     }
 }
 

@@ -1,11 +1,17 @@
-extern crate dfa;
+#![feature(vec_remove_item)]
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+extern crate clap;
 
-use dfa::lexer::Dfa;
-use std::fs::File;
-use std::io::{ BufRead, BufReader };
+mod dfa;
+
+use clap::{ App, Arg };
+use env_logger::LogBuilder;
+use dfa::Dfa;
+use std::path::PathBuf;
+use std::fs::{ File, OpenOptions };
+use std::io::{ BufRead, BufReader, BufWriter, Write };
 use std::env;
 use std::collections::HashMap;
 
@@ -40,13 +46,10 @@ enum Input {
     StateTransitionTarget(bool)
 }
 
-fn main() {
-    let files: Vec<String> = env::args().skip(1).collect();
+fn parse_grammar(files: Vec<&str>) -> Dfa<char> {
     let mut reading = Input::Normal;
     let mut dfa = Dfa::new();
     let mut reader: BufReader<File>;
-
-    env_logger::init().expect("Logger out!");
 
     for f in &files {
         // TODO: Translate to English (or maybe Esperanto!)
@@ -184,9 +187,117 @@ fn main() {
         }
     }
 
+    dfa
+}
+
+fn dump_automata(aut: &Dfa<char>, p: &PathBuf) {
+    let mut fp: File;
+    let mut writer: BufWriter<File>;
+
+    {
+        let mut path = p.clone();
+        path.set_extension("dot");
+        let dotfile = path.as_path();
+
+        fp = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(dotfile)
+            .unwrap();
+
+        writer = BufWriter::new(fp);
+        writer.write_all(aut.to_dot().as_bytes()).unwrap();
+    }
+
+    {
+        let mut path = p.clone();
+        path.set_extension("csv");
+        let csvfile = path.as_path();
+
+        fp = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(csvfile)
+            .unwrap();
+
+        writer = BufWriter::new(fp);
+        writer.write_all(aut.to_csv().as_bytes()).unwrap();
+    }
+}
+
+fn main() {
+    let app = App::new("DFA Generator")
+        .version("0.1.0")
+        .author("Gabriel Henrique Rudey <gabriel.rudey@gmail.com>")
+        .about("Create DFAs by Formal Grammars")
+        .arg(Arg::with_name("files")
+             .help("The files to be parsed")
+             .takes_value(true)
+             .value_name("FILE")
+             .multiple(true)
+             .required(true))
+        .arg(Arg::with_name("dump")
+             .short("d")
+             .long("dump")
+             .takes_value(true)
+             .value_name("DIRECTORY")
+             .help("The directory to dump debug files"))
+        .arg(Arg::with_name("verbosity")
+             .short("v")
+             .help("Set the log level")
+             .multiple(true));
+
+    let matches = app.get_matches();
+    let mut logger = LogBuilder::new();
+    let log_level  = env::var("LOG").unwrap_or_else(|_| {
+        match matches.occurrences_of("verbosity") {
+            1 => "ERROR".to_string(),
+            2 => "WARN".to_string(),
+            3 => "INFO".to_string(),
+            4 => "DEBUG".to_string(),
+            _ => "NONE".to_string()
+        }
+    });
+
+    logger.parse(&log_level);
+    logger.init().expect("Could not start logger");
+
+    let files: Vec<&str>   = matches.values_of("files").unwrap().collect();
+    let dump: Option<&str> = matches.value_of("dump");
+
+    let mut dfa = parse_grammar(files);
+
     info!("All files were parsed");
 
-    dfa.determinize();
-    dfa.minimize();
+    // Debug or simply calculate the result
+    if let Some(dir) = dump {
+        let mut file = PathBuf::from(dir.to_owned());
+
+        file.push("1fa");
+        dump_automata(&dfa, &file);
+
+        dfa.determinize();
+        file.set_file_name("2dfa");
+        dump_automata(&dfa, &file);
+
+        file.set_file_name("3dfa_nounreached");
+        dfa.remove_unreachable_states();
+        dump_automata(&dfa, &file);
+
+        dfa.remove_dead_states();
+        file.set_file_name("4dfa_final");
+        dump_automata(&dfa, &file);
+
+        dfa.insert_error_state();
+        file.set_file_name("5dfa_error");
+        dump_automata(&dfa, &file);
+    } else {
+        dfa.determinize();
+        dfa.minimize();
+        dfa.insert_error_state();
+    }
+
     println!("{}", dfa.to_csv());
 }
