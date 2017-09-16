@@ -46,12 +46,12 @@ enum Input {
     StateTransitionTarget(bool)
 }
 
-fn parse_grammar(files: Vec<&str>) -> Dfa<char> {
+fn parse_grammar(files: &[&str]) -> Dfa<char> {
     let mut reading = Input::Normal;
     let mut dfa = Dfa::new();
     let mut reader: BufReader<File>;
 
-    for f in &files {
+    for f in files {
         // TODO: Translate to English (or maybe Esperanto!)
         let file = File::open(f).expect("Não consegui ler os arquivos");
         let mut temp_transition: Option<char> = None;
@@ -86,14 +86,14 @@ fn parse_grammar(files: Vec<&str>) -> Dfa<char> {
                                 let index = if c == INITIAL_STATE_CHAR {
                                     *dfa.initial()
                                 } else {
-                                    if ! grammar_mapper.contains_key(&c) {
+                                    grammar_mapper.entry(c).or_insert_with(|| {
                                         let state = dfa.add_state(false);
-                                        grammar_mapper.insert(c, state);
-
                                         debug!("[DEF] Indexing {} to {}", c, state);
-                                    }
 
-                                    *grammar_mapper.get(&c).unwrap()
+                                        state
+                                    });
+
+                                    grammar_mapper[&c]
                                 };
 
                                 // If current char is == INITIAL_STATE_CHAR, rewind to initial
@@ -145,14 +145,14 @@ fn parse_grammar(files: Vec<&str>) -> Dfa<char> {
                             let target = if c == INITIAL_STATE_CHAR {
                                 *dfa.initial()
                             } else {
-                                if ! grammar_mapper.contains_key(&c) {
+                                grammar_mapper.entry(c).or_insert_with(|| {
                                     let state = dfa.add_state(false);
-                                    grammar_mapper.insert(c, state);
-
                                     debug!("[TRANS] Indexing {} to {}", c, state);
-                                }
 
-                                *grammar_mapper.get(&c).unwrap()
+                                    state
+                                });
+
+                                grammar_mapper[&c]
                             };
 
                             if let Some(t) = temp_transition.take() {
@@ -267,7 +267,7 @@ fn main() {
     let files: Vec<&str>   = matches.values_of("files").unwrap().collect();
     let dump: Option<&str> = matches.value_of("dump");
 
-    let mut dfa = parse_grammar(files);
+    let mut dfa = parse_grammar(files.as_slice());
 
     info!("All files were parsed");
 

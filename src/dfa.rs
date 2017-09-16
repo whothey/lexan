@@ -123,8 +123,8 @@ impl<T: Transitable + Debug> Dfa<T> {
     pub fn add_transition_to(&mut self, state: &usize, trans: Transition<T>) {
         self.alphabet.insert(trans.0.clone());
 
-        if self.transitions.contains_key(&state) {
-            self.transitions.get_mut(&state).unwrap().insert(trans);
+        if self.transitions.contains_key(state) {
+            self.transitions.get_mut(state).unwrap().insert(trans);
         } else {
             let mut set = HashSet::new();
             set.insert(trans);
@@ -156,7 +156,7 @@ impl<T: Transitable + Debug> Dfa<T> {
     /// Removes a state from DFA, returns an Option with informations if state was accepting and
     /// its transitions
     pub fn remove_state(&mut self, index: usize) -> Option<(bool, Option<HashSet<Transition<T>>>)> {
-        for (_, ts) in &mut self.transitions {
+        for ts in self.transitions.values_mut() {
             ts.retain(|x| x.1 != index);
         }
 
@@ -179,9 +179,9 @@ impl<T: Transitable + Debug> Dfa<T> {
         for c in &self.alphabet {
             let mut multiple = HashSet::new();
 
-            for t in self.transitions[index].iter() {
+            for t in &self.transitions[index] {
                 if &t.0 == c {
-                    multiple.insert(t.1.clone());
+                    multiple.insert(t.1);
                 }
             }
 
@@ -211,12 +211,12 @@ impl<T: Transitable + Debug> Dfa<T> {
         for s in self.transitions.keys() {
             let ndt = self.ndt_of(s);
 
-            if ndt.len() > 0 {
-                ndet.insert(s.clone(), ndt);
+            if !ndt.is_empty() {
+                ndet.insert(*s, ndt);
             }
         }
 
-        return if ndet.len() > 0 {
+        if !ndet.is_empty() {
             Some(ndet)
         } else {
             None
@@ -235,7 +235,7 @@ impl<T: Transitable + Debug> Dfa<T> {
             for (s, by) in non_deterministic {
                 // {T => usize}
                 // First, for each non-deterministic transition, map a new state
-                for (c, to) in by.iter() {
+                for (c, to) in &by {
                     let mut trans_to: HashSet<_> = HashSet::new();
                     let mut has_equivalent: Option<usize> = None;
                     let mut ndtrans = Vec::new(); // Vec of non-det transitions
@@ -286,7 +286,7 @@ impl<T: Transitable + Debug> Dfa<T> {
                         let mut dets = HashSet::new();
 
                         for d in ts.drain() {
-                            if d.0 == c.to_owned() {
+                            if d.0 == *c {
                                 // Wipe out non-deterministic transitions to Vec
                                 ndtrans.push(d);
                             } else {
@@ -370,10 +370,10 @@ impl<T: Transitable + Debug> Dfa<T> {
         next.push_back(self.initial().to_owned());
 
         // "BFS"
-        while unreached.len() > 0 && next.len() > 0 {
+        while !unreached.is_empty() && !next.is_empty() {
             current = next.pop_front().unwrap();
 
-            for ts in self.transitions.get(&current) {
+            if let Some(ts) = self.transitions.get(&current) {
                 for t in ts {
                     if unreached.binary_search(&t.1).is_ok() {
                         next.push_back(t.1);
@@ -402,7 +402,7 @@ impl<T: Transitable + Debug> Dfa<T> {
         dead = unvisited.clone();
 
         // "DFS"
-        while dead.len() > 0 && stack.len() > 0 {
+        while !dead.is_empty() && !stack.is_empty() {
             let (current, stacked_by) = stack.pop().unwrap();
 
             // Check and correct path
@@ -423,7 +423,7 @@ impl<T: Transitable + Debug> Dfa<T> {
                     }
 
                     // Stack neighbours that were not visited
-                    if unvisited.iter().position(|x| x == &t.1).is_some() {
+                    if unvisited.iter().any(|x| x == &t.1) {
                         unvisited.remove_item(&t.1);
                         stack.push((t.1, current));
                     }
@@ -464,7 +464,7 @@ impl<T: Transitable + Debug> Dfa<T> {
 
         for state in states {
             let transitions_by = { 
-                let transitions = self.transitions.entry(state).or_insert(HashSet::new());
+                let transitions = self.transitions.entry(state).or_insert_with(HashSet::new);
                 transitions.iter().map(|x| x.0.clone()).collect()
             };
 
@@ -491,7 +491,7 @@ impl<T: Display + Debug + Eq + Hash + Ord> Dfa<T> {
             }
 
             for s in &alphabet {
-                if let Some(ref transitions) = self.transitions.get(&state) {
+                if let Some(transitions) = self.transitions.get(state) {
                     let mut ts = "{".to_string();
 
                     for t in transitions.iter() {
@@ -531,20 +531,20 @@ impl<T: Display + Debug + Eq + Hash + Ord> Dfa<T> {
         csv.push('\n');
 
         for k in &states {
-            let accept = self.states.get(&k).unwrap();
+            let accept = &self.states[k];
 
-            if k.to_owned() == self.initial() { csv.push_str("->"); }
+            if *k == self.initial() { csv.push_str("->"); }
             if accept.to_owned() { csv.push('*'); }
 
             csv += format!("<{}>", k).as_str();
 
             for a in &alphabet {
-                match self.transitions.get(&k) {
+                match self.transitions.get(k) {
                     Some(trans) => {
                         let mut has_states = false;
 
                         for t in trans {
-                            if &t.0 == a.to_owned() {
+                            if t.0 == **a {
                                 // Controls the first comma
                                 if ! has_states { csv.push(','); has_states = true; }
                                 csv += format!("<{}>", t.1).as_str();
